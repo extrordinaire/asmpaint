@@ -406,7 +406,16 @@ def grid():
     stroke(ORIGIN_COL)
     
     line(0-GLOBAL_X,0,width/SCALE-GLOBAL_X,0)
-    line(0,0-GLOBAL_Y,0,height/SCALE-GLOBAL_Y)    
+    line(0,0-GLOBAL_Y,0,height/SCALE-GLOBAL_Y)
+    
+    stroke(SCREEN_COL)
+    strokeWeight(1)
+    line(0-GLOBAL_X,SCREEN_HEIGHT,width/SCALE-GLOBAL_X,SCREEN_HEIGHT)
+    line(SCREEN_WIDTH,0-GLOBAL_Y,SCREEN_WIDTH,height/SCALE-GLOBAL_Y)
+
+    
+    stroke(ORIGIN_COL)
+    strokeWeight(1)
 
 def rectBehaviour(x,y):
     print("Rect",x,y)
