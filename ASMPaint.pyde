@@ -472,15 +472,6 @@ def saveShapes():
             txt.append("")
             txt.append("\tbl rect")
             txt.append("")
-            if 0 <= posx < 2000:
-                txt.append("\tsub x1, x1, "+str(posx))
-            else:
-                txt.append("\tadd x1, x1, "+str(-posx))
-            if 0 <= posy < 2000:
-                txt.append("\tsub x2, x2, "+str(posy))
-            else:
-                txt.append("\tadd x2, x2, "+str(-posy))
-            txt.append("")
             txt.append("")
             
         if isinstance(s,tria):
@@ -496,24 +487,15 @@ def saveShapes():
             else:
                 txt.append("\tsub x1, x1, "+str(-posx))
             if 0 <= posy < INM_LIMIT:
-                txt.append("\tadd x2, x1, "+str(posy))
+                txt.append("\tadd x2, x2, "+str(posy))
             else:
-                txt.append("\tadd x2, x1, "+str(-posy))
+                txt.append("\tadd x2, x2, "+str(-posy))
             txt.append("\tmovz x3, "+str(abs(int(size[0]))))
             txt.append("\tmovz x4, "+str(abs(int(size[1]))))
             txt.append("\tmovz x5, 0x"+hex(s.col>> 16 & 0xFF)[6:]+", lsl 16")
             txt.append("\tmovk x5, 0x"+hex(s.col>> 8 & 0xFF)[6:]+hex(s.col>> 0 & 0xFF)[6:]+", lsl 00")
             txt.append("")
             txt.append("\tbl trian"+str(s.ttype))
-            txt.append("")
-            if 0 <= posx < 2000:
-                txt.append("\tsub x1, x1, "+str(posx))
-            else:
-                txt.append("\tadd x1, x1, "+str(-posx))
-            if 0 <= posy < 2000:
-                txt.append("\tsub x2, x2, "+str(posy))
-            else:
-                txt.append("\tadd x2, x2 "+str(-posy))
             txt.append("")
             txt.append("")
                 
