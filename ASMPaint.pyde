@@ -291,7 +291,7 @@ class tria:
         ret = self.p1
         
         for p in self.pivots:
-            if p.x < ret.x and p.y <= ret.y:
+            if p.x <= ret.x and p.y <= ret.y:
                 ret = p
         
         return ret
@@ -301,7 +301,7 @@ class tria:
         ret = self.p2
         
         for p in self.pivots:
-            if p.x > ret.x and p.y > ret.y:
+            if p.x >= ret.x and p.y >= ret.y:
                 ret = p
         
         return ret
@@ -472,6 +472,15 @@ def saveShapes():
             txt.append("")
             txt.append("\tbl rect")
             txt.append("")
+            if 0 <= posx < 2000:
+                txt.append("\tsub x1, x1, "+str(posx))
+            else:
+                txt.append("\tadd x1, x1, "+str(posx))
+            if 0 <= posy < 2000:
+                txt.append("\tsub x2, x2, "+str(posy))
+            else:
+                txt.append("\tadd x2, x2, "+str(posy))
+            txt.append("")
             txt.append("")
             
         if isinstance(s,tria):
@@ -485,17 +494,26 @@ def saveShapes():
             if 0 <= posx < INM_LIMIT:
                 txt.append("\tadd x1, x1, "+str(posx))
             else:
-                txt.append("\tsub x1, x1, "+str(-posx))
+                txt.append("\tsub x1, x1, "+str(posx))
             if 0 <= posy < INM_LIMIT:
                 txt.append("\tadd x2, x2, "+str(posy))
             else:
-                txt.append("\tadd x2, x2, "+str(-posy))
+                txt.append("\tsub x2, x2, "+str(posy))
             txt.append("\tmovz x3, "+str(abs(int(size[0]))))
             txt.append("\tmovz x4, "+str(abs(int(size[1]))))
             txt.append("\tmovz x5, 0x"+hex(s.col>> 16 & 0xFF)[6:]+", lsl 16")
             txt.append("\tmovk x5, 0x"+hex(s.col>> 8 & 0xFF)[6:]+hex(s.col>> 0 & 0xFF)[6:]+", lsl 00")
             txt.append("")
             txt.append("\tbl trian"+str(s.ttype))
+            txt.append("")
+            if 0 <= posx < 2000:
+                txt.append("\tsub x1, x1, "+str(posx))
+            else:
+                txt.append("\tadd x1, x1, "+str(posx))
+            if 0 <= posy < 2000:
+                txt.append("\tsub x2, x2, "+str(posy))
+            else:
+                txt.append("\tadd x2, x2, "+str(posy))
             txt.append("")
             txt.append("")
                 
