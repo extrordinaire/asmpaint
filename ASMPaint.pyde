@@ -114,7 +114,7 @@ class anchor:
     
     def mouseSnatch(self):
         global SELECTED
-        if(dist(self.x,self.y,mouseX/SCALE-GLOBAL_X,mouseY/SCALE-GLOBAL_Y) < self.rad and not MOVING):
+        if(dist(self.x,self.y,mouseX/SCALE-GLOBAL_X,mouseY/SCALE-GLOBAL_Y) < self.rad/SCALE and not MOVING):
             cursor(HAND)
             self.selected = True
             if SELECTED["type"] == None and mousePressed:
