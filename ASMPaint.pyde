@@ -67,8 +67,8 @@ def selectAnchor(a):
 
 class anchor:
     
-    s_rad = 15
-    rad = 10
+    s_rad = 25
+    rad = 20
     
     s_col = color(255,0,0)
     col = color(255,155,0)
@@ -102,14 +102,14 @@ class anchor:
             fill(self.s_col)
             ellipse(self.x,
                     self.y,
-                    self.s_rad,
-                    self.s_rad)
+                    self.s_rad/SCALE,
+                    self.s_rad/SCALE)
         else:
             fill(self.col)
             ellipse(self.x,
                     self.y,
-                    self.rad,
-                    self.rad)
+                    self.rad/SCALE,
+                    self.rad/SCALE)
         self.selected = False
     
     def mouseSnatch(self):
