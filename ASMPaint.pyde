@@ -279,30 +279,34 @@ class tria:
         if pivot == self.p1:
             self.p3.x = pivot.x
         
-        if pivot == self.p2:
+        elif pivot == self.p2:
             self.p3.y = pivot.y
         
-        if pivot == self.p3:
+        elif pivot == self.p3:
             self.p1.x = pivot.x
             self.p2.y = pivot.y
                         
     def lesserPivot(self):
         
-        ret = self.p1
+        ret = [self.p3.x,self.p3.y]
         
         for p in self.pivots:
-            if p.x <= ret.x and p.y <= ret.y:
-                ret = p
+            if p.x < ret[0]:
+                ret[0] = p.x
+            if p.y < ret[1]:
+                ret[1] = p.y
         
         return ret
     
     def greaterPivot(self):
         
-        ret = self.p2
+        ret = [self.p3.x,self.p3.y]
         
         for p in self.pivots:
-            if p.x >= ret.x and p.y >= ret.y:
-                ret = p
+            if p.x > ret[0]:
+                ret[0] = p.x
+            if p.y > ret[1]:
+                ret[1] = p.y
         
         return ret
     
@@ -323,14 +327,14 @@ class tria:
             else:
                 self.ttype = 3
         
-        return (gP.x-lP.x,gP.y-lP.y)
+        return (lP[0]-gP[0],lP[1]-gP[1])
     
     def update_pivots(self):
         lP = self.lesserPivot()
         gP = self.greaterPivot()
         
-        print("Lesser corner",lP.x,lP.y)
-        print("Greater corner",gP.x,gP.y)
+        print("Lesser corner",lP[0],lP[1])
+        print("Greater corner",gP[0],gP[1])
         
         pass
         
@@ -456,7 +460,7 @@ def saveShapes():
             posx = int(lP.x)
             posy = int(lP.y)
             
-            size = s.getSize()
+            rect_size = s.getSize()
             if 0 <= posx < 2000:
                 txt.append("\tadd x1, x1, "+str(posx))
             else:
@@ -465,8 +469,8 @@ def saveShapes():
                 txt.append("\tadd x2, x2, "+str(posy))
             else:
                 txt.append("\tsub x2, x2, "+str(-posy))
-            txt.append("\tmovz x3, "+str(abs(int(size[0]))))
-            txt.append("\tmovz x4, "+str(abs(int(size[1]))))
+            txt.append("\tmovz x3, "+str(abs(int(rect_size[0]))))
+            txt.append("\tmovz x4, "+str(abs(int(rect_size[1]))))
             txt.append("\tmovz x5, 0x"+hex(s.col>> 16 & 0xFF)[6:]+", lsl 16")
             txt.append("\tmovk x5, 0x"+hex(s.col>>  8 & 0xFF)[6:]+hex(s.col>> 0 & 0xFF)[6:]+", lsl 00")
             txt.append("")
@@ -485,12 +489,13 @@ def saveShapes():
             
         if isinstance(s,tria):
             lP = s.lesserPivot()
-            posx = int(lP.x)
-            posy = int(lP.y)
+            posx = int(lP[0])
+            posy = int(lP[y])
             
             print("Possesions",posx,posy)
             
-            size = s.getSize()
+            trian_size = s.getSize()
+            
             if 0 <= posx < INM_LIMIT:
                 txt.append("\tadd x1, x1, "+str(posx))
             else:
@@ -499,8 +504,8 @@ def saveShapes():
                 txt.append("\tadd x2, x2, "+str(posy))
             else:
                 txt.append("\tsub x2, x2, "+str(posy))
-            txt.append("\tmovz x3, "+str(abs(int(size[0]))))
-            txt.append("\tmovz x4, "+str(abs(int(size[1]))))
+            txt.append("\tmovz x3, "+str(abs(int(trian_size[0]))))
+            txt.append("\tmovz x4, "+str(abs(int(trian_size[1]))))
             txt.append("\tmovz x5, 0x"+hex(s.col>> 16 & 0xFF)[6:]+", lsl 16")
             txt.append("\tmovk x5, 0x"+hex(s.col>> 8 & 0xFF)[6:]+hex(s.col>> 0 & 0xFF)[6:]+", lsl 00")
             txt.append("")
