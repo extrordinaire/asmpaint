@@ -1,317 +1,355 @@
+import random
+from datetime import datetime
 
-from INIT import *
+# -------------------- COLOR RGB TUPLES (moved to setup) --------------------
 
-def setup():
-    #size(800,800)
-    fullScreen()
-    rectMode(CENTER)
-    pass
+_GRID_RGB       = (216, 239, 255)
+_ORIGIN_RGB     = (126, 191, 240)
+_SHAPE_BOR_RGB  = (39,  39,  39)
+_TOOL_BG_SEL_RGB= (180, 200, 200)
+_TOOL_BG_RGB    = (166, 200, 166)
+_SCREEN_RGB     = (255, 180,  43)
+_SELECTED_RGB   = (200, 155, 155)
 
-def mousePressed():
-    #print("M clicked")
-    global mousePressedT
-    mousePressedT = 1
-    
-def mouseReleased():
-    global mousePressedT
-    mousePressedT = 2 if mousePressedT == 1 else 0
+# These will be overwritten by color(...) in setup()
+GRID_COL       = None
+ORIGIN_COL     = None
+SHAPE_BOR_COL  = None
+TOOL_BG_SEL    = None
+TOOL_BG        = None
+SCREEN_COL     = None
+SELECTED_COL   = None
 
-def mousePressedReleased():
-    global mousePressedT
-    if mousePressedT == 2 and not mousePressed:
-        mousePressedT = 0
-        return True
-    return False
+SCREEN_WIDTH   = 640
+SCREEN_HEIGHT  = 480
 
-def setUnity(unity):
-    global UNITY
-    UNITY = int(unity[0])
+UNITY          = 100
 
-def setColor(colors):
-    global SELECTED_COL
-    print(colors)
-    SELECTED_COL = color(int(colors[0]),int(colors[1]),int(colors[2]))
+# -------------------- SELECTION TRACKING --------------------
 
-def setPNAME(name):
-    global P_NAME
-    P_NAME = name[0]+".txt"
+SELECTED = {
+    "type": None,    # "tool", "anchor", or "group"
+    "data": None,    # The actual object (Tool instance, Anchor, or list of shapes)
+    "origin": (0, 0)
+}
 
-def sendCommand(txt):
-    s_command = txt.split(' ')
-    command = s_command[0]
-    print(command)
-    if command in commands:
-        commands[command]()
-    if command in utility:
-        try:
-            #print(utility[s_command[0]](s_command[1],globals()[s_command[2]])[0].name if len(s_command) == 3 else utility[s_command[0]](s_command[1])[0].name)
-            utility[command]([arg for arg in s_command[1:]])
-        except:
-            pass
-    pass
+LAST_SELECTED = {
+    "type": None,
+    "data": None,
+    "origin": (0, 0)
+}
 
-QUADRANT = {}
+SNATCHRAD      = 100  # Spatial-hash cell size for anchors
 
-def setSelected(type,data,origin):
-    global SELECT
-    SELECTED["type"] = type
+# -------------------- CANVAS PAN / ZOOM STATE --------------------
+
+GLOBAL_X = 0
+GLOBAL_Y = 0
+ORIGIN_X = 0
+ORIGIN_Y = 0
+SCALE    = 1.0
+
+MOVING   = False
+SPEED_X  = 0
+SPEED_Y  = 0
+AXIS_X   = 0
+AXIS_Y   = 0
+
+QUADRANT = {}  # maps (cell_x, cell_y) → list of Anchor instances
+
+# -------------------- KEY STATE --------------------
+
+keys = {
+    37: False,  # LEFT ARROW
+    38: False,  # UP ARROW
+    39: False,  # RIGHT ARROW
+    40: False,  # DOWN ARROW
+    ' ': False  # SPACEBAR
+}
+
+TEXT_CACHE    = ""
+TEXT_SIZE     = 30
+
+INM_LIMIT     = 3000
+
+mousePressedT = False
+
+# Collection of all shapes (RectangleShape, TriangleShape, EllipseShape)
+shapes = []
+
+# Default P_NAME uses current datetime “dd-mm-YYYY-HH-MM.txt”
+P_NAME = datetime.now().strftime("%d-%m-%Y-%H-%M") + ".txt"
+
+
+# -------------------- SELECTION HELPERS --------------------
+
+def setSelected(sel_type, data, origin):
+    """
+    Update the SELECTED dictionary and, if sel_type is not None,
+    also record in LAST_SELECTED.
+    """
+    SELECTED["type"] = sel_type
     SELECTED["data"] = data
     SELECTED["origin"] = origin
-    if type != None:
-        LAST_SELECTED["type"] = type
+    if sel_type is not None:
+        LAST_SELECTED["type"] = sel_type
         LAST_SELECTED["data"] = data
         LAST_SELECTED["origin"] = origin
 
 def selectAnchor(a):
-    setSelected("anchor",a,(a.x,a.y))
+    """Shortcut to select a single Anchor."""
+    setSelected("anchor", a, (a.x, a.y))
 
-class anchor:
-    
-    s_rad = 25
-    rad = 20
-    
-    s_col = color(255,0,0)
-    col = color(255,155,0)
-    
-    selected = False
-    selectable = False
-    
-    x = 0
-    y = 0
-    
-    ox = 0
-    oy = 0
-    
-    parent = None
-    
-    def __init__(self, posx = 0, posy = 0, parent = None):
+def selectAll():
+    """Select all shapes as a group."""
+    setSelected("group", shapes, (0, 0))
+
+
+# -------------------- ANCHOR CLASS --------------------
+
+class Anchor:
+    """
+    Draggable pivot point. On release, snaps to nearest UNITY grid and updates its parent shape.
+    """
+    s_rad      = 25  # radius when hovered/selected
+    rad        = 20  # normal radius
+
+    def __init__(self, posx=0, posy=0, parent=None):
         self.x = posx
         self.y = posy
-        self.ox = self.x
-        self.oy = self.y
+        self.ox = posx
+        self.oy = posy
         self.parent = parent
-        
-        if QUADRANT.has_key((posx // SNATCHRAD , posy // SNATCHRAD )):
-            QUADRANT[(posx // SNATCHRAD , posy // SNATCHRAD )].append(self)
+        self.selected = False  # for drawing highlight
+        cell = (int(self.x) // SNATCHRAD, int(self.y) // SNATCHRAD)
+        if cell in QUADRANT:
+            QUADRANT[cell].append(self)
         else:
-            QUADRANT[(posx // SNATCHRAD , posy // SNATCHRAD )] = []
-            QUADRANT[(posx // SNATCHRAD , posy // SNATCHRAD )].append(self)
+            QUADRANT[cell] = [self]
 
     def display(self):
-        if(self.selected):
-            fill(self.s_col)
-            ellipse(self.x,
-                    self.y,
-                    self.s_rad/SCALE,
-                    self.s_rad/SCALE)
+        """Draw the pivot circle (larger if selected)."""
+        if self.selected:
+            fill(255, 0, 0)
+            ellipse(self.x, self.y, self.s_rad / SCALE, self.s_rad / SCALE)
         else:
-            fill(self.col)
-            ellipse(self.x,
-                    self.y,
-                    self.rad/SCALE,
-                    self.rad/SCALE)
+            fill(255, 155, 0)
+            ellipse(self.x, self.y, self.rad / SCALE, self.rad / SCALE)
         self.selected = False
-    
+
     def mouseSnatch(self):
-        global SELECTED
-        if(dist(self.x,self.y,mouseX/SCALE-GLOBAL_X,mouseY/SCALE-GLOBAL_Y) < self.rad/SCALE and not MOVING):
+        """
+        If the mouse is within rad/SCALE of this anchor, highlight it
+        and—if no other selection—select it on click.
+        """
+        mx = mouseX / SCALE - GLOBAL_X
+        my = mouseY / SCALE - GLOBAL_Y
+        if dist(self.x, self.y, mx, my) < (self.rad / SCALE) and not MOVING:
             cursor(HAND)
             self.selected = True
-            if SELECTED["type"] == None and mousePressed:
+            if SELECTED["type"] is None and mousePressed:
                 selectAnchor(self)
-    
-    def move_visually(self, x, y):
-        if self.parent != None:
+
+    def move_visually(self, new_x, new_y):
+        """
+        While dragging, update this anchor’s position (continuous),
+        notify parent shape to adjust shape visually.
+        """
+        if self.parent is not None:
             self.parent.update_visually(self)
-        self.x = x
-        self.y = y
-        
+        self.x = new_x
+        self.y = new_y
+
     def move(self):
-        
-        self.x = round(self.x/UNITY) * UNITY
-        self.y = round(self.y/UNITY) * UNITY
-        
+        """
+        On mouse release: snap to UNITY grid, re-hash into QUADRANT,
+        and finalize parent shape’s pivots.
+        """
+        # Snap to nearest UNITY increment
+        self.x = round(self.x / UNITY) * UNITY
+        self.y = round(self.y / UNITY) * UNITY
+
+        old_cell = (self.ox // SNATCHRAD, self.oy // SNATCHRAD)
+        new_cell = (self.x // SNATCHRAD, self.y // SNATCHRAD)
+
+        # Remove from old cell
         try:
-            QUADRANT[(self.ox // SNATCHRAD  ),(self.oy // SNATCHRAD )].remove(self)
+            QUADRANT[old_cell].remove(self)
         except:
-            print("at delete : ",QUADRANT[(self.ox // SNATCHRAD  ),(self.oy // SNATCHRAD )])
-            
-        if QUADRANT.has_key((self.x // SNATCHRAD , self.y // SNATCHRAD )):
-            QUADRANT[( self.x // SNATCHRAD , self.y // SNATCHRAD )].append(self)
+            pass
+
+        # Add to new cell
+        if new_cell in QUADRANT:
+            QUADRANT[new_cell].append(self)
         else:
-            QUADRANT[( self.x // SNATCHRAD , self.y // SNATCHRAD )] = []
-            QUADRANT[( self.x // SNATCHRAD , self.y // SNATCHRAD )].append(self)
-        
+            QUADRANT[new_cell] = [self]
+
         self.ox = self.x
         self.oy = self.y
 
-class rectan:
-    
-    col = SELECTED_COL
-    
-    def __init__(self,posx,posy,rad = 100):
-        self.x = posx
-        self.y = posy
-        
-        self.p1 = anchor(posx,posy,self)
-        self.p2 = anchor(posx+rad,posy,self)
-        self.p3 = anchor(posx+rad,posy+rad,self)
-        self.p4 = anchor(posx,posy+rad,self)
-        
-        self.pivots = [self.p1,self.p2,self.p3,self.p4]
-    
-    def moveShape(self,dx,dy):
+
+# -------------------- SHAPE CLASSES --------------------
+
+class RectangleShape:
+    """
+    Axis-aligned rectangle defined by four Anchors: p1(top-left), p2(top-right),
+    p3(bottom-right), p4(bottom-left). Dragging any corner keeps it axis-aligned.
+    """
+    def __init__(self, posx, posy, size=100, col=None):
+        self.col = col
+        self.p1 = Anchor(posx, posy, self)
+        self.p2 = Anchor(posx + size, posy, self)
+        self.p3 = Anchor(posx + size, posy + size, self)
+        self.p4 = Anchor(posx, posy + size, self)
+        self.pivots = [self.p1, self.p2, self.p3, self.p4]
+
+    def moveShape(self, dx, dy):
+        """Translate all pivots and re-hash them."""
         for p in self.pivots:
             p.x += dx
             p.y += dy
             p.move()
-    
+
     def display(self):
+        """Draw a filled rectangle (via beginShape/endShape) and its pivots."""
         fill(self.col)
-        #stroke(SHAPE_BOR_COL)
         noStroke()
-        
         beginShape()
         for p in self.pivots:
             vertex(p.x, p.y)
         endShape(CLOSE)
-        
         for p in self.pivots:
             p.display()
 
-    def update_visually(self,pivot):
-        
+    def update_visually(self, pivot):
+        """
+        While dragging pivot:
+        - If pivot == p1, keep p2.y = p1.y and p4.x = p1.x
+        - If pivot == p2, keep p1.y = p2.y and p3.x = p2.x
+        - If pivot == p3, keep p2.x = p3.x and p4.y = p3.y
+        - If pivot == p4, keep p1.x = p4.x and p3.y = p4.y
+        """
         if pivot == self.p1:
             self.p2.y = pivot.y
             self.p4.x = pivot.x
-        
-        if pivot == self.p2:
+        elif pivot == self.p2:
             self.p1.y = pivot.y
             self.p3.x = pivot.x
-        
-        if pivot == self.p3:
+        elif pivot == self.p3:
             self.p4.y = pivot.y
             self.p2.x = pivot.x
-        
-        if pivot == self.p4:
+        elif pivot == self.p4:
             self.p1.x = pivot.x
             self.p3.y = pivot.y
-            
+
     def lesserPivot(self):
-        
+        """Return the top-left pivot (smallest x and y)."""
         ret = self.p1
-        
         for p in self.pivots:
             if p.x < ret.x and p.y < ret.y:
                 ret = p
-        
         return ret
-    
+
     def greaterPivot(self):
-        
+        """Return the bottom-right pivot (largest x and y)."""
         ret = self.p3
-        
         for p in self.pivots:
             if p.x > ret.x and p.y > ret.y:
                 ret = p
-        
         return ret
-    
+
     def getSize(self):
-        
+        """Compute (width, height) from lesser vs. greater pivots."""
         lP = self.lesserPivot()
         gP = self.greaterPivot()
-        
-        return (gP.x-lP.x,gP.y-lP.y)
-    
+        return (gP.x - lP.x, gP.y - lP.y)
+
     def update_pivots(self):
-        lP = self.lesserPivot()
-        gP = self.greaterPivot()
-        
-        print("Lesser corner",lP.x,lP.y)
-        print("Greater corner",gP.x,gP.y)
-        
+        """(Optional) Debug print of corners."""
+        # lP = self.lesserPivot()
+        # gP = self.greaterPivot()
+        # print("Rect corners:", (lP.x, lP.y), (gP.x, gP.y))
         pass
-        
+
     def update(self):
+        """Snap each pivot to the grid and then recalc corners."""
         for p in self.pivots:
             p.move()
         self.update_pivots()
-        pass    
 
-class tria:
-    
-    col = color(255,255,0)
-    
-    def __init__(self, posx = 0, posy = 0,rad = 100, col = SELECTED_COL):
-        self.x = posx
-        self.y = posy
-        
+
+class TriangleShape:
+    """
+    Right-angled triangle with three pivots: p1, p2, p3. Always axis-aligned:
+    - p1 = one corner, p2 = opposite corner of right angle, p3 = third vertex.
+    Dragging a pivot keeps the right-angle behavior.
+    """
+    def __init__(self, posx=0, posy=0, size=100, col=None):
         self.col = col
-        
-        self.p1 = anchor(posx,posy,self)
-        self.p2 = anchor(posx+rad,posy+rad,self)
-        self.p3 = anchor(posx,posy+rad,self)
-        
-        self.pivots = [self.p1,self.p2,self.p3]
+        self.p1 = Anchor(posx, posy, self)
+        self.p2 = Anchor(posx + size, posy + size, self)
+        self.p3 = Anchor(posx, posy + size, self)
+        self.pivots = [self.p1, self.p2, self.p3]
+        self.ttype = 0  # orientation type (0..3)
 
-        self.ttype = 0
-        
-    def moveShape(self,dx,dy):
+    def moveShape(self, dx, dy):
+        """Translate all pivots and re-hash."""
         for p in self.pivots:
             p.x += dx
             p.y += dy
             p.move()
-    
+
     def display(self):
+        """Draw filled triangle and its pivots."""
         fill(self.col)
         noStroke()
         beginShape()
         for p in self.pivots:
-            vertex(p.x,p.y)
+            vertex(p.x, p.y)
         endShape(CLOSE)
-        
         for p in self.pivots:
             p.display()
-    
-    def update_visually(self,pivot):
-        
+
+    def update_visually(self, pivot):
+        """
+        While dragging:
+        - If pivot == p1, set p3.x = p1.x.
+        - If pivot == p2, set p3.y = p2.y.
+        - If pivot == p3, set p1.x = p3.x and p2.y = p3.y.
+        """
         if pivot == self.p1:
             self.p3.x = pivot.x
-        
-        if pivot == self.p2:
+        elif pivot == self.p2:
             self.p3.y = pivot.y
-        
-        if pivot == self.p3:
+        elif pivot == self.p3:
             self.p1.x = pivot.x
             self.p2.y = pivot.y
-                        
+
     def lesserPivot(self):
-        
+        """Return the pivot with smallest x and y."""
         ret = self.p1
-        
         for p in self.pivots:
             if p.x <= ret.x and p.y <= ret.y:
                 ret = p
-        
         return ret
-    
+
     def greaterPivot(self):
-        
+        """Return the pivot with largest x and y."""
         ret = self.p2
-        
         for p in self.pivots:
             if p.x >= ret.x and p.y >= ret.y:
                 ret = p
-        
         return ret
-    
+
     def getSize(self):
-        
+        """
+        Compute (width, height) from bounding box, and set ttype for orientation.
+        ttype:
+          0 = p1 above p3 and p1 left of p2,
+          1 = p1 above p3 but p1 right of p2, etc.
+        """
         lP = self.lesserPivot()
         gP = self.greaterPivot()
-
-
         if self.p1.y <= self.p3.y:
             if self.p1.x <= self.p2.x:
                 self.ttype = 0
@@ -322,401 +360,706 @@ class tria:
                 self.ttype = 2
             else:
                 self.ttype = 3
-        
-        return (gP.x-lP.x,gP.y-lP.y)
-    
+        return (gP.x - lP.x, gP.y - lP.y)
+
     def update_pivots(self):
-        lP = self.lesserPivot()
-        gP = self.greaterPivot()
-        
-        print("Lesser corner",lP.x,lP.y)
-        print("Greater corner",gP.x,gP.y)
-        
+        """(Optional) Debug print."""
+        # lP = self.lesserPivot()
+        # gP = self.greaterPivot()
+        # print("Triangle corners:", (lP.x, lP.y), (gP.x, gP.y))
         pass
-        
+
     def update(self):
+        """Snap each pivot and recalc corners."""
         self.p1.move()
         self.p2.move()
         self.p3.move()
         self.update_pivots()
+
+
+class EllipseShape:
+    """
+    Ellipse inscribed in a bounding rectangle whose corners are p1..p4 anchors:
+    p1 = top-left, p2 = top-right, p3 = bottom-right, p4 = bottom-left.
+    Dragging any pivot keeps the opposite edges aligned as a rectangle.
+    """
+    def __init__(self, posx, posy, size=100, col=None):
+        self.col = col
+        self.p1  = Anchor(posx, posy, self)
+        self.p2  = Anchor(posx + size, posy, self)
+        self.p3  = Anchor(posx + size, posy + size, self)
+        self.p4  = Anchor(posx, posy + size, self)
+        self.pivots = [self.p1, self.p2, self.p3, self.p4]
+
+    def moveShape(self, dx, dy):
+        """Translate all pivots and re-hash."""
+        for p in self.pivots:
+            p.x += dx
+            p.y += dy
+            p.move()
+
+    def display(self):
+        """
+        Draw ellipse inside the rectangle defined by pivots, then pivots themselves.
+        """
+        fill(self.col)
+        noStroke()
+        lP = self.lesserPivot()
+        w, h = self.getSize()
+        cx = lP.x + w / 2.0
+        cy = lP.y + h / 2.0
+        ellipse(cx, cy, w, h)
+        for p in self.pivots:
+            p.display()
+
+    def update_visually(self, pivot):
+        """
+        While dragging:
+        - If pivot == p1, keep p2.y = p1.y and p4.x = p1.x
+        - If pivot == p2, keep p1.y = p2.y and p3.x = p2.x
+        - If pivot == p3, keep p4.y = p3.y and p2.x = p3.x
+        - If pivot == p4, keep p1.x = p4.x and p3.y = p4.y
+        """
+        if pivot == self.p1:
+            self.p2.y = pivot.y
+            self.p4.x = pivot.x
+        elif pivot == self.p2:
+            self.p1.y = pivot.y
+            self.p3.x = pivot.x
+        elif pivot == self.p3:
+            self.p4.y = pivot.y
+            self.p2.x = pivot.x
+        elif pivot == self.p4:
+            self.p1.x = pivot.x
+            self.p3.y = pivot.y
+
+    def lesserPivot(self):
+        """Return top-left pivot."""
+        ret = self.p1
+        for p in self.pivots:
+            if p.x < ret.x and p.y < ret.y:
+                ret = p
+        return ret
+
+    def greaterPivot(self):
+        """Return bottom-right pivot."""
+        ret = self.p3
+        for p in self.pivots:
+            if p.x > ret.x and p.y > ret.y:
+                ret = p
+        return ret
+
+    def getSize(self):
+        """Return (width, height) of bounding box."""
+        lP = self.lesserPivot()
+        gP = self.greaterPivot()
+        return (gP.x - lP.x, gP.y - lP.y)
+
+    def update_pivots(self):
+        """(Optional) Debug print."""
+        # lP = self.lesserPivot()
+        # gP = self.greaterPivot()
+        # print("Ellipse corners:", (lP.x, lP.y), (gP.x, gP.y))
         pass
 
-class tool:
-    
+    def update(self):
+        """Snap each pivot and recalc bounding box."""
+        for p in self.pivots:
+            p.move()
+        self.update_pivots()
+
+
+# -------------------- TOOL & BEHAVIOR CLASSES --------------------
+
+class Tool:
+    """
+    A clickable icon (rounded rectangle). Selecting it sets its “behaviour”
+    so that the next click in the canvas creates the corresponding shape.
+    """
     def __init__(self, name, behaviour):
-        #self.shapee = shapee
         self.name = name
-        self.behaviour = behaviour
+        self.behaviour = behaviour  # function(x, y)
         self.selected = False
-        pass
-        
+
     def display(self, x, y, sizee):
+        """
+        Draw the tool icon at (x,y) with width=height=sizee.
+        If clicked (mouseReleased inside), toggle selection.
+        """
         global mousePressedT
-        
         if SELECTED["data"] == self:
             fill(TOOL_BG_SEL)
         else:
             fill(TOOL_BG)
-            
-        rect(x,y,sizee,sizee,30)
-        #shape(self.shapee)
-        
-        if( mousePressedReleased() and dist(mouseX,mouseY,x,y) < sizee and SELECTED["data"] != self):
-    
-            mousePressedT = 0
-            setSelected("tool", self, (0,0))
-            self.selected = True
-            return
-        
-        if( mousePressedReleased() and dist(mouseX,mouseY,x,y) < sizee/2 and SELECTED["data"] == self):
-            
-            mousePressedT = 0
-            setSelect( None, None, (0,0))
-            self.selected = True
-            return     
 
-shapes = [rectan(random(600),random(600)) for x in range(0)]
+        noStroke()
+        rect(x, y, sizee, sizee, 30)
 
-def updateSpeed():
-    global SPEED_X, SPEED_Y, AXIS_X, AXIS_Y, keys
-    
-    AXIS_X = (keys[39] - keys[37])
-    AXIS_Y = (keys[40] - keys[38])
-        
-    SPEED_X += AXIS_X * 0.5
-    SPEED_Y += AXIS_Y * 0.5
+        if mousePressedReleased() and dist(mouseX, mouseY, x, y) < sizee:
+            # If not currently selected, select this tool; else deselect
+            if SELECTED["data"] != self:
+                mousePressedT = False
+                setSelected("tool", self, (0, 0))
+                self.selected = True
+            else:
+                mousePressedT = False
+                setSelected(None, None, (0, 0))
+                self.selected = False
 
-def grid():
-    #strokeWeight(5)
-    
-    stroke(GRID_COL)
-    
-    for x in range(int(width/SCALE)//UNITY):
-        line(x*UNITY-GLOBAL_X+GLOBAL_X%UNITY,
-             0-GLOBAL_Y,
-             x*UNITY-GLOBAL_X+GLOBAL_X%UNITY,
-             height/SCALE-GLOBAL_Y)
-        
-    for y in range(int(height/SCALE)//UNITY):
-        line(0-GLOBAL_X,
-             y*UNITY-GLOBAL_Y+GLOBAL_Y%UNITY,
-             width/SCALE-GLOBAL_X,
-             y*UNITY-GLOBAL_Y+GLOBAL_Y%UNITY)
-            
-    stroke(ORIGIN_COL)
-    
-    line(0-GLOBAL_X,0,width/SCALE-GLOBAL_X,0)
-    line(0,0-GLOBAL_Y,0,height/SCALE-GLOBAL_Y)
-    
-    stroke(SCREEN_COL)
-    strokeWeight(1)
-    line(0-GLOBAL_X,SCREEN_HEIGHT,width/SCALE-GLOBAL_X,SCREEN_HEIGHT)
-    line(SCREEN_WIDTH,0-GLOBAL_Y,SCREEN_WIDTH,height/SCALE-GLOBAL_Y)
 
-    
-    stroke(ORIGIN_COL)
-    strokeWeight(1)
-
-def rectBehaviour(x,y):
-    print("Rect",x,y)
+def rectBehaviour(x, y):
+    """
+    When rectangle tool is active and user clicks a point,
+    create a new RectangleShape (size=0), set its p3 pivot as selected
+    so user can drag out the rectangle.
+    """
     global SELECTED
-    n_rect = rectan(x, y, 0)
-    n_rect.col = SELECTED_COL
+    n_rect = RectangleShape(x, y, size=0, col=SELECTED_COL)
     shapes.append(n_rect)
-    setSelected( "anchor", n_rect.p3, (n_rect.p1.ox,n_rect.p1.oy))
+    setSelected("anchor", n_rect.p3, (n_rect.p1.x, n_rect.p1.y))
 
-def triaBehaviour(x,y):
-    print("tria",x,y)
+
+def triaBehaviour(x, y):
+    """
+    When triangle tool is active: new TriangleShape at (x,y) with size=0,
+    immediately select its p2 pivot so user can drag out the triangle.
+    """
     global SELECTED
-    n_tria = tria(x, y)
-    n_tria.col = SELECTED_COL
+    n_tria = TriangleShape(x, y, size=0, col=SELECTED_COL)
     shapes.append(n_tria)
-    setSelected( "anchor", n_tria.p2, (n_tria.p2.ox,n_tria.p2.oy))
+    setSelected("anchor", n_tria.p2, (n_tria.p2.x, n_tria.p2.y))
 
-rectTool = tool("rect",rectBehaviour)
-triaTool = tool("tria",triaBehaviour)
 
-tools = [rectTool,triaTool]
+def ellipseBehaviour(x, y):
+    """
+    When ellipse tool is active: new EllipseShape at (x,y) with size=0,
+    immediately select its p3 pivot for dragging out.
+    """
+    global SELECTED
+    n_el = EllipseShape(x, y, size=0, col=SELECTED_COL)
+    shapes.append(n_el)
+    setSelected("anchor", n_el.p3, (n_el.p1.x, n_el.p1.y))
+
+
+# Instantiate tool icons
+rectTool    = Tool("rect", rectBehaviour)
+triaTool    = Tool("tria", triaBehaviour)
+ellipseTool = Tool("ellipse", ellipseBehaviour)
+tools = [rectTool, triaTool, ellipseTool]
+
 
 def toolBox():
-    
-    for i,tool in enumerate(tools):
-        #fill(220,244,245)
-        #rect(width - (75 * i) - 75, height-75,50,50,10)
-        tool.display(width - (75 * i) - 75, height-75, 50)
-    pass
-    
+    """Draw all tool icons at bottom-right corner."""
+    for i, t in enumerate(tools):
+        t.display(width - (75 * i) - 75, height - 75, 50)
+
+
+# -------------------- EXPORT HELPERS (ASSEMBLY) --------------------
+
+def build_color_asm(r, g, b, a=255):
+    """
+    Produce lines:
+      movz x1, 0xRR   ; A in hex
+      movz x2, 0xGG   ; R in hex
+      movz x3, 0xBB   ; G in hex
+      movz x4, 0xAA   ; B in hex
+      bl   build_color
+    Resulting packed color in x4.
+    """
+    lines = []
+    lines.append("\tmovz x1, 0x{:02X}".format(a))
+    lines.append("\tmovz x2, 0x{:02X}".format(r))
+    lines.append("\tmovz x3, 0x{:02X}".format(g))
+    lines.append("\tmovz x4, 0x{:02X}".format(b))
+    lines.append("\tbl build_color")
+    return lines
+
+
 def saveShapes():
+    """
+    Iterate over each shape in `shapes`:
+      1) Extract (posx, posy) from lesserPivot.
+      2) Extract (width, height) from getSize().
+      3) Extract RGBA from s.col.
+      4) Emit build_color_asm(r,g,b,a) → x0 contains packed color.
+      5) movz x1, posx; movz x2, posy; movz x3, width; movz x4, height
+      6) mov x5, x0
+      7) bl <routine>   (rect / trian0..3 / ellipse)
+    Finally, write all lines to `P_NAME` (timestamped).
+    """
+    global P_NAME, SELECTED_COL
+    P_NAME = datetime.now().strftime("%d-%m-%Y-%H-%M") + ".txt"
+    txt = []
 
-    txt = [""]
+    for idx, s in enumerate(shapes):
+        if isinstance(s, RectangleShape):
+                        # 1) Gather all three pivot coordinates
+            xs = [p.x for p in s.pivots]
+            ys = [p.y for p in s.pivots]
 
-    for s in shapes:
-        if isinstance(s,rectan):
-            lP = s.lesserPivot()
-            posx = int(lP.x)
-            posy = int(lP.y)
+            # 2) Compute bounding‐box by min/max
+            lpx = min(xs)
+            lpy = min(ys)
+            gpx = max(xs)
+            gpy = max(ys)
+
+            posx = int(lpx)
+            posy = int(lpy)
+            w = abs(int(gpx - lpx))
+            h = abs(int(gpy - lpy))
             
-            size = s.getSize()
-            if 0 <= posx < 2000:
-                txt.append("\tadd x1, x1, "+str(posx))
-            else:
-                txt.append("\tsub x1, x1, "+str(-posx))
-            if 0 <= posy < 2000:
-                txt.append("\tadd x2, x2, "+str(posy))
-            else:
-                txt.append("\tsub x2, x2, "+str(-posy))
-            txt.append("\tmovz x3, "+str(abs(int(size[0]))))
-            txt.append("\tmovz x4, "+str(abs(int(size[1]))))
-            txt.append("\tmovz x5, 0x"+hex(s.col>> 16 & 0xFF)[6:]+", lsl 16")
-            txt.append("\tmovk x5, 0x"+hex(s.col>>  8 & 0xFF)[6:]+hex(s.col>> 0 & 0xFF)[6:]+", lsl 00")
+            rr = (s.col >> 16) & 0xFF
+            gg = (s.col >> 8)  & 0xFF
+            bb = (s.col     ) & 0xFF
+            aa = 255
+            txt.extend(build_color_asm(rr, gg, bb, aa))
+            txt.append("\tmovz x5, " + str(posx))
+            txt.append("\tmovz x8, " + str(posy))
+            txt.append("\tmovz x6, " + str(w))
+            txt.append("\tmovz x9, " + str(h))
+            txt.append("\tbl rectangle")
             txt.append("")
-            txt.append("\tbl rect")
-            txt.append("")
-            if 0 <= posx < 2000:
-                txt.append("\tsub x1, x1, "+str(posx))
-            else:
-                txt.append("\tadd x1, x1, "+str(posx))
-            if 0 <= posy < 2000:
-                txt.append("\tsub x2, x2, "+str(posy))
-            else:
-                txt.append("\tadd x2, x2, "+str(posy))
-            txt.append("")
+
+        elif isinstance(s, TriangleShape):
+            _ = s.getSize() 
+            
+            # 1) Gather all three pivot coordinates
+            xs = [p.x for p in s.pivots]
+            ys = [p.y for p in s.pivots]
+
+            # 2) Compute bounding‐box by min/max
+            lpx = min(xs)
+            lpy = min(ys)
+            gpx = max(xs)
+            gpy = max(ys)
+
+            posx = int(lpx)
+            posy = int(lpy)
+            w = abs(int(gpx - lpx))
+            h = abs(int(gpy - lpy))
+
+            ttype = s.ttype  # 0..3 (orientation)
+
+            # 3) Extract RGBA from s.col
+            rr = (s.col >> 16) & 0xFF
+            gg = (s.col >> 8)  & 0xFF
+            bb = (s.col      ) & 0xFF
+            aa = 255
+
+            # 4) Build color → X0
+            txt.extend(build_color_asm(rr, gg, bb, aa))
+
+             # 7) Load the right‐angle pivot (px,py) + leg lengths (w,h)
+            txt.append("\tmovz x5, " + str(posx))   # X1 = p3.x
+            txt.append("\tmovz x8, " + str(posy))   # X2 = p3.y
+            txt.append("\tmovz x6, " + str(w))    # X3 = horizontal leg length
+            txt.append("\tmovz x9, " + str(h))    # X5 = vertical leg length
+
+            # 6) Call the correct triangle routine
+            txt.append("\tbl triangle_" + str(ttype))
             txt.append("")
             
-        if isinstance(s,tria):
-            lP = s.lesserPivot()
-            posx = int(lP.x)
-            posy = int(lP.y)
-            
-            print("Possesions",posx,posy)
-            
-            size = s.getSize()
-            if 0 <= posx < INM_LIMIT:
-                txt.append("\tadd x1, x1, "+str(posx))
-            else:
-                txt.append("\tsub x1, x1, "+str(posx))
-            if 0 <= posy < INM_LIMIT:
-                txt.append("\tadd x2, x2, "+str(posy))
-            else:
-                txt.append("\tsub x2, x2, "+str(posy))
-            txt.append("\tmovz x3, "+str(abs(int(size[0]))))
-            txt.append("\tmovz x4, "+str(abs(int(size[1]))))
-            txt.append("\tmovz x5, 0x"+hex(s.col>> 16 & 0xFF)[6:]+", lsl 16")
-            txt.append("\tmovk x5, 0x"+hex(s.col>> 8 & 0xFF)[6:]+hex(s.col>> 0 & 0xFF)[6:]+", lsl 00")
-            txt.append("")
-            txt.append("\tbl trian"+str(s.ttype))
-            txt.append("")
-            if 0 <= posx < 2000:
-                txt.append("\tsub x1, x1, "+str(posx))
-            else:
-                txt.append("\tadd x1, x1, "+str(posx))
-            if 0 <= posy < 2000:
-                txt.append("\tsub x2, x2, "+str(posy))
-            else:
-                txt.append("\tadd x2, x2, "+str(posy))
-            txt.append("")
-            txt.append("")
-                
-    saveStrings(P_NAME,txt)
+        elif isinstance(s, EllipseShape):
+            # 1) Get top‐left corner and full width/height
+                        # 1) Gather all three pivot coordinates
+            xs = [p.x for p in s.pivots]
+            ys = [p.y for p in s.pivots]
 
-def showTextBox():
-    if len(TEXT_CACHE) > 0:
-        textAlign(LEFT)
-        fill(0)
-        textSize(TEXT_SIZE)
-        text(TEXT_CACHE,45,height-100)
+            # 2) Compute bounding‐box by min/max
+            lpx = min(xs)
+            lpy = min(ys)
+            gpx = max(xs)
+            gpy = max(ys)
 
-def pickMouse():
-    global SELECTED_COL
-    loadPixels()
-    SELECTED_COL = pixels[mouseX+(mouseY*width)]
+            posx = int(lpx)
+            posy = int(lpy)
+            w, h = s.getSize()
+            w = abs(int(w))
+            h = abs(int(h))
 
-def selectAll():
-    setSelected("group", shapes, (0,0))
+            # 2) Extract RGBA bytes from s.col
+            rr = (s.col >> 16) & 0xFF
+            gg = (s.col >> 8)  & 0xFF
+            bb = (s.col      ) & 0xFF
+            aa = 255
+    
+            # 3) Build the 32‐bit ARGB color → ends up in X4
+            txt.extend(build_color_asm(rr, gg, bb, aa))
+
+            # 5) Compute center and radii (integer division)
+            cx = posx + w // 2   # center X
+            cy = posy + h // 2   # center Y
+            rx = w // 2          # horizontal radius
+            ry = h // 2          # vertical radius
+
+            # 6) Load them into X5, X6, X8, X9
+            txt.append("\tmovz x5, " + str(cx))  # cx → X5
+            txt.append("\tmovz x6, " + str(rx))  # rx → X6
+            txt.append("\tmovz x8, " + str(cy))  # cy → X8
+            txt.append("\tmovz x9, " + str(ry))  # ry → X9
+
+            # 7) Call ellipse
+            txt.append("\tbl ellipse")
+            txt.append("")
+        
+    saveStrings(P_NAME, txt)
+
+
+# -------------------- COMMAND & UTILITY REGISTRATION --------------------
 
 commands = {
     "!save": saveShapes,
-    "!pickMouse": pickMouse,
-    "!selectAll": selectAll
+    "!selectAll": selectAll,
+    "!pickMouse": lambda: pickMouse()
 }
 
 utility = {
-    "!setColor": setColor,
-    "!setUnity": setUnity,
-    "!setPName": setPNAME
+    "!setColor": lambda args: setColor(args),
+    "!setUnity": lambda args: setUnity(args),
+    "!setPName": lambda args: setPNAME(args)
 }
 
+def sendCommand(txt):
+    """
+    On ENTER in the text box, split by spaces:
+    If the first token matches a key in `commands`, call it.
+    Otherwise if it matches a key in `utility`, call that with args.
+    """
+    s_command = txt.split(' ')
+    cmd = s_command[0]
+    if cmd in commands:
+        commands[cmd]()
+    elif cmd in utility:
+        try:
+            utility[cmd](s_command[1:])
+        except:
+            pass
 
-def draw():
-    
-    global SELECTED, SCALE, MOVING, GLOBAL_X, GLOBAL_Y, ORIGIN_X,ORIGIN_Y, SPEED_X, SPEED_Y, AXIS_X, AXIS_Y
-    
-    if SELECTED["type"] == None or not keys[' ']:
-        cursor(ARROW)
-        pass
-    
-    background("#FAFAFA")
-    
-    pushMatrix()
-    
-    scale(SCALE)
-    translate(GLOBAL_X,GLOBAL_Y)
-    
-    grid()
-    
-    #GLOBAL_X = cos(frameCount/100.0)*400
-    #GLOBAL_Y = sin(frameCount/100.0)*400
-    
-    #SCALE = 1+cos(frameCount/100.0)*0.5
-    
-    SPEED_X *= 0.94
-    GLOBAL_X -= SPEED_X
-    
-    SPEED_Y *= 0.94
-    GLOBAL_Y -= SPEED_Y
-    
-    for rectan in shapes:
-        rectan.display()
-        
-    deltex = mouseX/SCALE-GLOBAL_X
-    deltey = mouseY/SCALE-GLOBAL_Y
-    
-    if QUADRANT.has_key((deltex // SNATCHRAD,deltey // SNATCHRAD)):
-        #print(QUADRANT[(mouseX // SNATCHRAD),(mouseY // SNATCHRAD)])
-        for punto in QUADRANT[(deltex // SNATCHRAD),(deltey // SNATCHRAD)]:
-            #punto.selected = True
-            punto.mouseSnatch()
-    
-    if mousePressed:
-        if SELECTED["type"] == "anchor":
-            SELECTED["data"].move_visually(deltex, deltey)
-        
-        if SELECTED["type"] == "tool":
-            SELECTED["data"].behaviour(deltex,deltey)
-                
-    else:
-        if SELECTED["type"] == "anchor":
-            if SELECTED["data"].parent != None:
-                SELECTED["data"].parent.update_visually(SELECTED["data"])
-                SELECTED["data"].parent.update()
-            SELECTED["data"].move()
-            setSelected( None, None, (0,0))
-    
-    if keyPressed:
-        #print(key,keyCode)
-        
-        if key == CODED:
-            updateSpeed()
-            if keyCode == ESC:
-                exit()
-                
-        if key == ' ':
-            
-            if mousePressed and SELECTED["type"] == None:
-                cursor(HAND)
-                MOVING = True
-                GLOBAL_X = ORIGIN_X+mouseX/SCALE
-                GLOBAL_Y = ORIGIN_Y+mouseY/SCALE
-            else:
-                MOVING = False
-                ORIGIN_X = GLOBAL_X-mouseX/SCALE
-                ORIGIN_Y = GLOBAL_Y-mouseY/SCALE
 
-    popMatrix()
-    
-    toolBox()
-    showTextBox()
-    fill(SELECTED_COL)
-    rect(60,60,100,100,50)
+# -------------------- MOUSE & KEY HELPERS --------------------
+
+def mousePressed():
+    global mousePressedT
+    mousePressedT = 1
+
+def mouseReleased():
+    global mousePressedT
+    mousePressedT = 2 if mousePressedT == 1 else 0
+
+def mousePressedReleased():
+    """
+    Return True exactly once when the mouse is released after being pressed.
+    Then reset state.
+    """
+    global mousePressedT
+    if mousePressedT == 2 and not mousePressed:
+        mousePressedT = 0
+        return True
+    return False
+
+def mouseWheel(event):
+    """
+    Zoom in/out with scroll wheel → adjust SCALE (clamp at 0.1).
+    """
+    global SCALE
+    delta = event.getCount() / 10.0
+    SCALE -= delta
+    if SCALE < 0.1:
+        SCALE = 0.1
 
 def keyPressed():
-    
-    global TEXT_CACHE
-    
+    """
+    Handle:
+      - Arrow keys & WASD for nudging shapes
+      - c/t/e for selecting rectangle/triangle/ellipse tools
+      - u to deselect
+      - DEL to delete
+      - o to save quickly
+      - Text input (commands) with ENTER/BACKSPACE
+    """
+    global TEXT_CACHE, MOVING, GLOBAL_X, GLOBAL_Y, ORIGIN_X, ORIGIN_Y, SPEED_X, SPEED_Y
+
     if key == CODED:
         keys[keyCode] = True
+        if keyCode == ESC:
+            exit()
     else:
         keys[key] = True
-    
+
+    # If no text command in progress, handle shortcuts
     if len(TEXT_CACHE) <= 0:
         if key == 'w':
             if LAST_SELECTED["type"] == "group":
                 for s in LAST_SELECTED["data"]:
-                    s.moveShape(0,-UNITY)
-            if LAST_SELECTED["type"] == "anchor":
-                if LAST_SELECTED["data"].parent != None:
-                    LAST_SELECTED["data"].parent.moveShape(0,-UNITY)
+                    s.moveShape(0, -UNITY)
+            elif LAST_SELECTED["type"] == "anchor":
+                p = LAST_SELECTED["data"]
+                if p.parent is not None:
+                    p.parent.moveShape(0, -UNITY)
 
-        if key == 's':
+        elif key == 's':
             if LAST_SELECTED["type"] == "group":
                 for s in LAST_SELECTED["data"]:
                     s.moveShape(0, UNITY)
-            if LAST_SELECTED["type"] == "anchor":
-                if LAST_SELECTED["data"].parent != None:
-                    LAST_SELECTED["data"].parent.moveShape(0,UNITY)
+            elif LAST_SELECTED["type"] == "anchor":
+                p = LAST_SELECTED["data"]
+                if p.parent is not None:
+                    p.parent.moveShape(0, UNITY)
 
-        if key == 'a':
+        elif key == 'a':
             if LAST_SELECTED["type"] == "group":
                 for s in LAST_SELECTED["data"]:
-                    s.moveShape(-UNITY,0)
-            if LAST_SELECTED["type"] == "anchor":
-                if LAST_SELECTED["data"].parent != None:
-                    LAST_SELECTED["data"].parent.moveShape(-UNITY,0)
+                    s.moveShape(-UNITY, 0)
+            elif LAST_SELECTED["type"] == "anchor":
+                p = LAST_SELECTED["data"]
+                if p.parent is not None:
+                    p.parent.moveShape(-UNITY, 0)
 
-        if key == 'd':
+        elif key == 'd':
             if LAST_SELECTED["type"] == "group":
                 for s in LAST_SELECTED["data"]:
-                    s.moveShape( UNITY,0)
-            if LAST_SELECTED["type"] == "anchor":
-                if LAST_SELECTED["data"].parent != None:
-                    LAST_SELECTED["data"].parent.moveShape(UNITY,0)
-        
+                    s.moveShape(UNITY, 0)
+            elif LAST_SELECTED["type"] == "anchor":
+                p = LAST_SELECTED["data"]
+                if p.parent is not None:
+                    p.parent.moveShape(UNITY, 0)
+
+        # Tool shortcuts
         if key == 'c':
-            setSelected('tool', rectTool, (0,0))
-        
-        if key == 't':
-            setSelected('tool', triaTool, (0,0))
-        
-        if key == 'u':
+            setSelected('tool', rectTool, (0, 0))
+        elif key == 't':
+            setSelected('tool', triaTool, (0, 0))
+        elif key == 'e':
+            setSelected('tool', ellipseTool, (0, 0))
+        elif key == 'u':
             LAST_SELECTED["type"] = None
-        
-        if key == '\x7f':
+        elif key == '\x7f':  # DELETE
             if LAST_SELECTED["type"] == "group":
                 for s in LAST_SELECTED["data"]:
                     shapes.remove(s)
                 LAST_SELECTED["type"] = None
-            if LAST_SELECTED["type"] == "anchor":
-                if LAST_SELECTED["data"].parent != None:
-                    if LAST_SELECTED["data"].parent in shapes:
-                        shapes.remove(LAST_SELECTED["data"].parent)
-                        LAST_SELECTED["type"] == None
-    
-        if key == 'o':
+            elif LAST_SELECTED["type"] == "anchor":
+                p = LAST_SELECTED["data"]
+                if p.parent is not None and p.parent in shapes:
+                    shapes.remove(p.parent)
+                    LAST_SELECTED["type"] = None
+        elif key == 'o':  # Quick save
             saveShapes()
-        
-    if key in [ENTER,DELETE,BACKSPACE]:
+
+    # Text command handling
+    if key in [ENTER, DELETE, BACKSPACE]:
         if key == BACKSPACE:
             TEXT_CACHE = TEXT_CACHE[:-1]
-        if key == ENTER:
+        elif key == ENTER:
             sendCommand(TEXT_CACHE)
             TEXT_CACHE = ""
 
-def keyTyped():
-    global TEXT_CACHE
-    if len(TEXT_CACHE) <= 0:
-        if key != '!':
-            return
-    if key not in [ENTER,DELETE,BACKSPACE]:
-        TEXT_CACHE += key
-    pass
-
 def keyReleased():
+    """Update key state dictionary."""
     if key == CODED:
         keys[keyCode] = False
     else:
         keys[key] = False
 
-def mouseWheel(event):
-    global SCALE, GLOBAL_X, GLOBAL_Y
-    e = event.getCount()/10.0
-    SCALE -= e
+def keyTyped():
+    """
+    Accumulate characters into TEXT_CACHE if the first character was '!'
+    or we are already typing a command.
+    """
+    global TEXT_CACHE
+    if len(TEXT_CACHE) <= 0 and key != '!':
+        return
+    if key not in [ENTER, DELETE, BACKSPACE]:
+        TEXT_CACHE += key
+
+
+# -------------------- GRID & CAMERA CONTROL --------------------
+
+def updateSpeed():
+    """
+    If arrow keys are held, accelerate camera pan.
+    """
+    global SPEED_X, SPEED_Y, AXIS_X, AXIS_Y
+    AXIS_X = (1 if keys.get(39, False) else 0) - (1 if keys.get(37, False) else 0)
+    AXIS_Y = (1 if keys.get(40, False) else 0) - (1 if keys.get(38, False) else 0)
+    SPEED_X += AXIS_X * 0.5
+    SPEED_Y += AXIS_Y * 0.5
+
+def grid():
+    """
+    Draw:
+      - Evenly spaced vertical lines (in GRID_COL)
+      - Evenly spaced horizontal lines (in GRID_COL)
+      - Axes at origin (in ORIGIN_COL)
+      - Screen boundary lines (in SCREEN_COL)
+    """
+    strokeWeight(1)
+    stroke(GRID_COL)
+
+    # Vertical lines
+    cols = int(width / SCALE) // UNITY + 2
+    for xi in range(cols):
+        x_screen = xi * UNITY - GLOBAL_X + (GLOBAL_X % UNITY)
+        line(x_screen, -GLOBAL_Y, x_screen, height / SCALE - GLOBAL_Y)
+
+    # Horizontal lines
+    rows = int(height / SCALE) // UNITY + 2
+    for yi in range(rows):
+        y_screen = yi * UNITY - GLOBAL_Y + (GLOBAL_Y % UNITY)
+        line(-GLOBAL_X, y_screen, width / SCALE - GLOBAL_X, y_screen)
+
+    # Origin axes
+    stroke(ORIGIN_COL)
+    strokeWeight(2)
+    line(-GLOBAL_X, 0, width / SCALE - GLOBAL_X, 0)
+    line(0, -GLOBAL_Y, 0, height / SCALE - GLOBAL_Y)
+
+    # SCREEN boundary
+    stroke(SCREEN_COL)
+    strokeWeight(2)
+    line(-GLOBAL_X, SCREEN_HEIGHT, width / SCALE - GLOBAL_X, SCREEN_HEIGHT)
+    line(SCREEN_WIDTH, -GLOBAL_Y, SCREEN_WIDTH, height / SCALE - GLOBAL_Y)
+
+
+# -------------------- COLOR‐PICKER UTILITY --------------------
+
+def pickMouse():
+    """
+    Pick color from pixel under mouse (unscaled coords) and assign to SELECTED_COL.
+    """
+    global SELECTED_COL
+    loadPixels()
+    idx = mouseX + mouseY * width
+    if 0 <= idx < len(pixels):
+        SELECTED_COL = pixels[idx]
+
+
+# -------------------- SETTERS FOR UTILITY COMMANDS --------------------
+
+def setUnity(args):
+    """Set UNITY from args[0]."""
+    global UNITY
+    UNITY = int(args[0])
+
+def setColor(args):
+    """Set SELECTED_COL from [r, g, b]."""
+    global SELECTED_COL
+    r = int(args[0]); g = int(args[1]); b = int(args[2])
+    SELECTED_COL = color(r, g, b)
+
+def setPNAME(args):
+    """Override P_NAME to args[0] + '.txt'."""
+    global P_NAME
+    P_NAME = args[0] + ".txt"
+
+
+# -------------------- PROCESSING SETUP & DRAW --------------------
+
+def setup():
+    """
+    Initialize fullScreen, enable color variables, set modes, textSize, etc.
+    """
+    global GRID_COL, ORIGIN_COL, SHAPE_BOR_COL, TOOL_BG_SEL, TOOL_BG, SCREEN_COL, SELECTED_COL
+
+    # Create a full-screen window
+    fullScreen()
+    # Convert RGB‐tuples into actual Processing colors now that the context exists
+    GRID_COL      = color(_GRID_RGB[0], _GRID_RGB[1], _GRID_RGB[2])
+    ORIGIN_COL    = color(_ORIGIN_RGB[0], _ORIGIN_RGB[1], _ORIGIN_RGB[2])
+    SHAPE_BOR_COL = color(_SHAPE_BOR_RGB[0], _SHAPE_BOR_RGB[1], _SHAPE_BOR_RGB[2])
+    TOOL_BG_SEL   = color(_TOOL_BG_SEL_RGB[0], _TOOL_BG_SEL_RGB[1], _TOOL_BG_SEL_RGB[2])
+    TOOL_BG       = color(_TOOL_BG_RGB[0], _TOOL_BG_RGB[1], _TOOL_BG_RGB[2])
+    SCREEN_COL    = color(_SCREEN_RGB[0], _SCREEN_RGB[1], _SCREEN_RGB[2])
+    SELECTED_COL  = color(_SELECTED_RGB[0], _SELECTED_RGB[1], _SELECTED_RGB[2])
+
+    rectMode(CENTER)
+    textSize(TEXT_SIZE)
+
+
+def draw():
+    """
+    Each frame:
+      - Clear background
+      - pushMatrix(): scale/translate → draw grid, shapes, handle anchor snatches
+      - popMatrix()
+      - Draw toolbox
+      - Draw text command (if any)
+      - Draw small swatch showing SELECTED_COL
+    """
+    global SCALE, MOVING, GLOBAL_X, GLOBAL_Y, ORIGIN_X, ORIGIN_Y, SPEED_X, SPEED_Y
+
+    background(100)
+
+    pushMatrix()
+    scale(SCALE)
+    translate(GLOBAL_X, GLOBAL_Y)
+
+    # Draw the grid + axes
+    grid()
+
+    # Smooth camera movement
+    SPEED_X *= 0.94
+    SPEED_Y *= 0.94
+    GLOBAL_X -= SPEED_X
+    GLOBAL_Y -= SPEED_Y
+
+    # Draw every shape
+    for shp in shapes:
+        shp.display()
+
+    # Check which anchors live in the same SNATCHRAD cell as the mouse
+    mx = mouseX / SCALE - GLOBAL_X
+    my = mouseY / SCALE - GLOBAL_Y
+    cell = (int(mx) // SNATCHRAD, int(my) // SNATCHRAD)
+    if cell in QUADRANT:
+        for punto in QUADRANT[cell]:
+            punto.mouseSnatch()
+
+    # If the mouse is pressed, either drag an anchor or create a new shape via selected tool
+    if mousePressed:
+        if SELECTED["type"] == "anchor":
+            sel_anchor = SELECTED["data"]
+            sel_anchor.move_visually(mx, my)
+        elif SELECTED["type"] == "tool":
+            tool_inst = SELECTED["data"]
+            tool_inst.behaviour(mx, my)
+    else:
+        # On release, finalize anchor’s move & snap to grid
+        if SELECTED["type"] == "anchor":
+            sel_anchor = SELECTED["data"]
+            if sel_anchor.parent is not None:
+                sel_anchor.parent.update_visually(sel_anchor)
+                sel_anchor.parent.update()
+            sel_anchor.move()
+            setSelected(None, None, (0, 0))
+
+    # Handle camera panning with SPACE + drag
+    if keyPressed:
+        if key == CODED:
+            updateSpeed()
+        elif key == ' ':
+            if mousePressed and SELECTED["type"] is None:
+                cursor(HAND)
+                MOVING = True
+                GLOBAL_X = ORIGIN_X + mouseX / SCALE
+                GLOBAL_Y = ORIGIN_Y + mouseY / SCALE
+            else:
+                MOVING = False
+                ORIGIN_X = GLOBAL_X - mouseX / SCALE
+                ORIGIN_Y = GLOBAL_Y - mouseY / SCALE
+
+    popMatrix()
+
+    # Draw the toolbox icons
+    toolBox()
+
+    # If user is typing a command, show TEXT_CACHE
+    if len(TEXT_CACHE) > 0:
+        textAlign(LEFT)
+        fill(0)
+        text(TEXT_CACHE, 45, height - 100)
+
+    # Draw a small rectangle in top-left showing current SELECTED_COL
+    fill(SELECTED_COL)
+    noStroke()
+    rect(60, 60, 100, 100, 50)
